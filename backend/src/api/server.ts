@@ -10,6 +10,7 @@ import { VersionManager } from '../vfs/VersionManager.js';
 import { AIGateway } from '../ai/AIGateway.js';
 import { ContextManager } from '../context/ContextManager.js';
 import { Orchestrator } from '../orchestrator/Orchestrator.js';
+import { DockerBuildRunner } from '../build/DockerBuildRunner.js';
 import { sessionRoutes } from './routes/sessions.js';
 import { streamingRoutes } from './routes/streaming.js';
 import { healthRoutes } from './routes/health.js';
@@ -53,13 +54,25 @@ export async function createServer() {
   // Initialize Context Manager
   const contextManager = new ContextManager();
 
+  // Initialize Build Runner (optional - requires Docker)
+  let buildRunner;
+  try {
+    buildRunner = new DockerBuildRunner();
+    fastify.log.info('Docker build runner initialized');
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    fastify.log.warn(`Docker build runner not available: ${errorMsg}`);
+    buildRunner = undefined;
+  }
+
   // Initialize Orchestrator
   const orchestrator = new Orchestrator(
     aiGateway,
     contextManager,
     vfs,
     versionManager,
-    sessionManager
+    sessionManager,
+    buildRunner
   );
   fastify.decorate('orchestrator', orchestrator);
 

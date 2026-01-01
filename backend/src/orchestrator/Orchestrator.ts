@@ -10,6 +10,7 @@ import { SessionManager } from '../sessions/SessionManager.js';
 import type { FileSet, Package, BuildError } from '../types/ai.js';
 import type { FileDiff, Version } from '../types/index.js';
 import { SessionState } from '../types/session.js';
+import type { BuildRunner } from '../types/build.js';
 
 export class Orchestrator {
   private aiGateway: AIGateway;
@@ -17,19 +18,22 @@ export class Orchestrator {
   private vfs: VFS;
   private versionManager: VersionManager;
   private sessionManager: SessionManager;
+  private buildRunner?: BuildRunner;
 
   constructor(
     aiGateway: AIGateway,
     contextManager: ContextManager,
     vfs: VFS,
     versionManager: VersionManager,
-    sessionManager: SessionManager
+    sessionManager: SessionManager,
+    buildRunner?: BuildRunner
   ) {
     this.aiGateway = aiGateway;
     this.contextManager = contextManager;
     this.vfs = vfs;
     this.versionManager = versionManager;
     this.sessionManager = sessionManager;
+    this.buildRunner = buildRunner;
   }
 
   /**
@@ -92,9 +96,30 @@ export class Orchestrator {
       this.sessionManager.setCurrentVersion(sessionId, version.id);
       this.sessionManager.transitionState(sessionId, SessionState.VALIDATING, 'Validating build');
 
-      // Step 7: For now, mark as ready (in Phase 4, this will trigger actual build)
-      this.versionManager.updateVersionStatus(version.id, 'VALID');
-      this.sessionManager.transitionState(sessionId, SessionState.READY, 'Build complete');
+      // Step 7: Trigger build if build runner is available
+      if (this.buildRunner) {
+        this.sessionManager.transitionState(sessionId, SessionState.BUILDING, 'Running build');
+        
+        try {
+          const buildResult = await this.buildRunner.execute(version.id, files);
+          
+          if (buildResult.success) {
+            this.versionManager.updateVersionStatus(version.id, 'VALID');
+            this.sessionManager.transitionState(sessionId, SessionState.READY, 'Build complete');
+          } else {
+            this.versionManager.updateVersionStatus(version.id, 'FAILED', buildResult.error?.message);
+            this.sessionManager.transitionState(sessionId, SessionState.FAILED, buildResult.error?.message || 'Build failed');
+          }
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'Build error';
+          this.versionManager.updateVersionStatus(version.id, 'FAILED', errorMessage);
+          this.sessionManager.transitionState(sessionId, SessionState.FAILED, errorMessage);
+        }
+      } else {
+        // No build runner, mark as valid (for testing)
+        this.versionManager.updateVersionStatus(version.id, 'VALID');
+        this.sessionManager.transitionState(sessionId, SessionState.READY, 'Build complete (no build runner)');
+      }
 
       this.contextManager.addMessage(
         sessionId,
@@ -153,9 +178,29 @@ export class Orchestrator {
       this.sessionManager.setCurrentVersion(sessionId, newVersion.id);
       this.sessionManager.transitionState(sessionId, SessionState.BUILDING, 'Rebuilding');
 
-      // Mark as valid (in Phase 4, this will trigger build)
-      this.versionManager.updateVersionStatus(newVersion.id, 'VALID');
-      this.sessionManager.transitionState(sessionId, SessionState.READY, 'Fix complete');
+      // Trigger build if build runner is available
+      if (this.buildRunner) {
+        this.sessionManager.transitionState(sessionId, SessionState.BUILDING, 'Rebuilding');
+        
+        try {
+          const buildResult = await this.buildRunner.execute(newVersion.id, filesMap);
+          
+          if (buildResult.success) {
+            this.versionManager.updateVersionStatus(newVersion.id, 'VALID');
+            this.sessionManager.transitionState(sessionId, SessionState.READY, 'Fix complete');
+          } else {
+            this.versionManager.updateVersionStatus(newVersion.id, 'FAILED', buildResult.error?.message);
+            this.sessionManager.transitionState(sessionId, SessionState.FAILED, buildResult.error?.message || 'Build failed');
+          }
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'Build error';
+          this.versionManager.updateVersionStatus(newVersion.id, 'FAILED', errorMessage);
+          this.sessionManager.transitionState(sessionId, SessionState.FAILED, errorMessage);
+        }
+      } else {
+        this.versionManager.updateVersionStatus(newVersion.id, 'VALID');
+        this.sessionManager.transitionState(sessionId, SessionState.READY, 'Fix complete (no build runner)');
+      }
 
       return newVersion.id;
     } catch (error) {
