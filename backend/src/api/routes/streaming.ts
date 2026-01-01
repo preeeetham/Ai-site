@@ -13,6 +13,13 @@ export async function streamingRoutes(fastify: FastifyInstance) {
   fastify.get<{ Params: SessionParams }>(
     '/api/v1/sessions/:id/stream',
     async (request: FastifyRequest<{ Params: SessionParams }>, reply: FastifyReply) => {
+      // Set CORS headers for SSE
+      const origin = request.headers.origin;
+      if (origin) {
+        reply.raw.setHeader('Access-Control-Allow-Origin', origin);
+        reply.raw.setHeader('Access-Control-Allow-Credentials', 'true');
+      }
+      
       // Set SSE headers
       reply.raw.setHeader('Content-Type', 'text/event-stream');
       reply.raw.setHeader('Cache-Control', 'no-cache');
